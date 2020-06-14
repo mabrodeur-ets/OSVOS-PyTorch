@@ -4,8 +4,8 @@ from __future__ import division
 import os
 import socket
 import timeit
-from datetime import datetime
-from tensorboardX import SummaryWriter
+from datetime import datetime, date, time, timedelta
+#from tensorboardX import SummaryWriter
 
 # PyTorch includes
 import torch
@@ -24,18 +24,23 @@ from layers.osvos_layers import class_balanced_cross_entropy_loss
 from dataloaders.helpers import *
 from mypath import Path
 
-# MAB includes
-from datetime import datetime, date, time, timedelta
+# Custom includes (MAB)
+from myconfigs import Configs
 
-# MAIN() PROGRAM
+
 def main():
+    """
+    MAIN() PROGRAM
+    Instructions :
 
-    #TODO : Make the (sequence name) a parameter or something 
-    # i.e. more dynamic and easy to change than USER'S ENVIRONMENT VARIABLES
+    * To configure the paths used by this program, change the values in the file mypath.py
+    * To configure the user parameters used by this program, change the values in the file myconfigs.py
+
+    """
 
     # Setting of parameters
     if 'SEQ_NAME' not in os.environ.keys():
-        seq_name = 'blackswan' # blackswan
+        seq_name = Configs.sequence_name        # default: blackswan
     else:
         seq_name = str(os.environ['SEQ_NAME'])
 
@@ -47,26 +52,6 @@ def main():
     if not os.path.exists(save_dir):
         os.makedirs(os.path.join(save_dir))
 
-    # User Variables
-    # ------------------------------------
-    # Variables that we can modify
-
-    vis_net = 0  # Visualize the network?
-    vis_res = 0  # Visualize the results?
-    nAveGrad = 5  # Average the gradient every nAveGrad iterations
-    nEpochs = 2000 * nAveGrad  # Number of epochs for training
-    snapshot = nEpochs  # Store a model every snapshot epochs
-
-    # Parameters in p are used for the name of the model
-    p = {
-        'trainBatch': 1,  # Number of Images in each mini-batch
-        }
-    seed = 0
-
-    # Name and Epoch of the Model used to start the fine-tuning
-    parentModelName = 'parent'
-    parentEpoch = 240
-
     # Select which GPU, -1 if CPU
     print('CUDA is available : ' + str(torch.cuda.is_available()) + '\n')
     gpu_id = 0
@@ -76,7 +61,7 @@ def main():
 
     # Network definition
     net = vo.OSVOS(pretrained=0)
-    net.load_state_dict(torch.load(os.path.join(save_dir, parentModelName+'_epoch-'+str(parentEpoch-1)+'.pth'),
+    net.load_state_dict(torch.load(os.path.join(save_dir, Configs.parentModelName + '_epoch-' + str(Configs.parentEpoch - 1) +'.pth'),
                                    map_location=lambda storage, loc: storage))
 
     # Logging into Tensorboard
@@ -87,7 +72,7 @@ def main():
     net.to(device)  # PyTorch 0.4.0 style
 
     # Visualize the network
-    if vis_net:
+    if Configs.vis_network:
         x = torch.randn(1, 3, 480, 854)
         x.requires_grad_()
         x = x.to(device)
@@ -119,44 +104,57 @@ def main():
     
     # Training dataset and its iterator
     db_train = db.DAVIS2016(train=True, db_root_dir=db_root_dir, transform=composed_transforms, seq_name=seq_name)
-    trainloader = DataLoader(db_train, batch_size=p['trainBatch'], shuffle=True, num_workers=1)
+    trainloader = DataLoader(db_train, batch_size=Configs.p['trainBatch'], shuffle=True, num_workers=1)
 
     # Testing dataset and its iterator
     db_test = db.DAVIS2016(train=False, db_root_dir=db_root_dir, transform=tr.ToTensor(), seq_name=seq_name)
     testloader = DataLoader(db_test, batch_size=1, shuffle=False, num_workers=1)
 
+    # Training Phase
+    # i.e. Fine-tuning using the first frame
+    train(device, seq_name, 0, Configs.nb_epochs, net, optimizer, trainloader, testloader, writer, save_dir)    
+
+    # Testing Phase
+    # i.e. Predicting the rest of the video (sequence of images) based on the fine-tuning done during Online Training
+    test(device, seq_name, net, testloader, writer, save_dir)
+
+    writer.close()
+    print('OSVOS End..')
+
+def train(device, seq_name, start_epoch, end_epoch, network, optimizer, trainloader, testloader, writer, save_dir):
     num_img_tr = len(trainloader)
     num_img_ts = len(testloader)
     loss_tr = []
-    aveGrad = 0
-
+    aveGrad = 0    
+    
     print("\nStart of Online Training (fine-tuning Phase), sequence: " + seq_name)
     print("Started at: ", datetime.now())
     start_time = timeit.default_timer()
 
     # Main Training and Testing Loop
     # i.e. Fine-tuning using the first image of video (sequence of images)
-    for epoch in range(0, nEpochs):
+    for epoch in range(start_epoch, end_epoch):
 
         # One training epoch
         running_loss_tr = 0
-        np.random.seed(seed + epoch)
+        np.random.seed(Configs.seed + epoch)
+        
         for ii, sample_batched in enumerate(trainloader):
 
             inputs, gts = sample_batched['image'], sample_batched['gt']
 
             # Forward-Backward of the mini-batch
-            inputs.requires_grad_()
-            inputs, gts = inputs.to(device), gts.to(device)
+            inputs.requires_grad_() # Training -> Requires gradients to be computed
+            inputs, gts = inputs.to(device), gts.to(device) # Push the images and ground-truths to GPU
 
-            outputs = net.forward(inputs)
+            outputs = network.forward(inputs)
 
             # Compute the fuse loss
             loss = class_balanced_cross_entropy_loss(outputs[-1], gts, size_average=False)
             running_loss_tr += loss.item()  # PyTorch 0.4.0 style
 
             # Print stuff
-            if epoch % (nEpochs//20) == (nEpochs//20 - 1):
+            if epoch % (Configs.nb_epochs // 20) == (Configs.nb_epochs // 20 - 1):
                 running_loss_tr /= num_img_tr
                 loss_tr.append(running_loss_tr)
 
@@ -165,20 +163,22 @@ def main():
                 writer.add_scalar('data/total_loss_epoch', running_loss_tr, epoch)
 
             # Backward the averaged gradient
-            loss /= nAveGrad
+            loss /= Configs.avg_gradient_every
             loss.backward()
             aveGrad += 1
 
             # Update the weights once in nAveGrad forward passes
-            if aveGrad % nAveGrad == 0:
+            if aveGrad % Configs.avg_gradient_every == 0:
                 writer.add_scalar('data/total_loss_iter', loss.item(), ii + num_img_tr * epoch)
                 optimizer.step()
                 optimizer.zero_grad()
                 aveGrad = 0
 
         # Save the model
-        if (epoch % snapshot) == snapshot - 1 and epoch != 0:
-            torch.save(net.state_dict(), os.path.join(save_dir, seq_name + '_epoch-'+str(epoch) + '.pth'))
+        if (epoch % Configs.checkpoint_every) == (Configs.checkpoint_every - 1) and (epoch != 0):
+            torch.save(network.state_dict(), os.path.join(save_dir, seq_name + '_epoch-'+str(epoch) + '.pth'))
+            # todo try checkpoint function
+
 
     stop_time = timeit.default_timer()
 
@@ -186,20 +186,21 @@ def main():
     print('Time (HH:MM:SS): ', timedelta(seconds=(stop_time - start_time)))
     print("Ended at: ", datetime.now())
 
-    # Testing Phase
-    # i.e. Predicting the rest of the video (sequence of images) based on the fine-tuning done during Online Training
-    if vis_res:
+def test(device, seq_name, network, testloader, writer, save_dir) :
+    if Configs.vis_results:
         import matplotlib.pyplot as plt
         plt.close("all")
         plt.ion()
         f, ax_arr = plt.subplots(1, 3)
 
+    # Defines the path where to save the results, create the directory if it doesn't exist
     save_dir_res = os.path.join(save_dir, 'Results', seq_name)
     if not os.path.exists(save_dir_res):
         os.makedirs(save_dir_res)
 
     print('Testing Network')
     with torch.no_grad():  # PyTorch 0.4.0 style (Do not update the gradients = Predict)
+        
         # Main Testing Loop
         for ii, sample_batched in enumerate(testloader):
 
@@ -208,7 +209,7 @@ def main():
             # Forward of the mini-batch
             inputs, gts = img.to(device), gt.to(device)
 
-            outputs = net.forward(inputs)
+            outputs = network.forward(inputs)
 
             for jj in range(int(inputs.size()[0])):
                 pred = np.transpose(outputs[-1].cpu().data.numpy()[jj, :, :, :], (1, 2, 0))
@@ -221,7 +222,7 @@ def main():
                 imageio.imwrite(os.path.join(save_dir_res, os.path.basename(fname[jj]) + '.png'), pred_as_uint8)
                 print('Result (' + fname[jj] + '.png) Saved!')
 
-                if vis_res:
+                if Configs.vis_results:
                     img_ = np.transpose(img.numpy()[jj, :, :, :], (1, 2, 0))
                     gt_ = np.transpose(gt.numpy()[jj, :, :, :], (1, 2, 0))
                     gt_ = np.squeeze(gt)
@@ -236,9 +237,6 @@ def main():
                     ax_arr[1].imshow(gt_)
                     ax_arr[2].imshow(im_normalize(pred))
                     plt.pause(0.001)
-
-    writer.close()
-    print('OSVOS End..')
 
 # Required for execution on Windows
 # When you call train_online.py, it executes the main()

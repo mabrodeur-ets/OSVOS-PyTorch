@@ -5,7 +5,7 @@ import os
 import socket
 import timeit
 from datetime import datetime
-from tensorboardX import SummaryWriter
+#from tensorboardX import SummaryWriter
 
 # PyTorch includes
 import torch
@@ -27,25 +27,33 @@ from mypath import Path
 # MAB includes
 from datetime import datetime, date, time, timedelta
 
+def force_makedirs(directory):
+    """
+    Create a directory without permission error
+    """
+    print(directory)
+    if not os.path.exists(directory):
+        previous_umask = os.umask(000) # os.umask() returns the previous setting, thus previous_umask
+        os.makedirs(os.path.join(directory), 0o777)
+        os.umask(previous_umask)
+
 # MAIN() PROGRAM
 def main():
 
-    #TODO : Make the (sequence name) a parameter or something 
-    # i.e. more dynamic and easy to change than USER'S ENVIRONMENT VARIABLES
-
     # Setting of parameters
     if 'SEQ_NAME' not in os.environ.keys():
-        seq_name = 'blackswan' # blackswan
+        seq_name = 'blackswan' # default: 'blackswan'
     else:
         seq_name = str(os.environ['SEQ_NAME'])
 
     # Load the paths
-    db_root_dir = Path.db_root_dir()
-    save_dir = Path.save_root_dir()
+    db_root_dir = os.path.join(str(os.environ['SLURM_TMPDIR']), Path.db_root_dir())
+    save_dir = os.path.join(str(os.environ['SLURM_TMPDIR']), Path.save_root_dir())
 
     # Create the path for save_dir if it doesn't exist
-    if not os.path.exists(save_dir):
-        os.makedirs(os.path.join(save_dir))
+    #if not os.path.exists(save_dir):
+    #    os.makedirs(os.path.join(save_dir))
+    force_makedirs(save_dir)
 
     # User Variables
     # ------------------------------------
@@ -54,8 +62,8 @@ def main():
     vis_net = 0  # Visualize the network?
     vis_res = 0  # Visualize the results?
     nAveGrad = 5  # Average the gradient every nAveGrad iterations
-    nEpochs = 2000 * nAveGrad  # Number of epochs for training
-    snapshot = nEpochs  # Store a model every snapshot epochs
+    nEpochs = 2000 * nAveGrad  # Number of epochs for training (default: 2000 * nAveGrad)
+    snapshot = 1000  # Store a model every snapshot epochs (default: nEpochs)
 
     # Parameters in p are used for the name of the model
     p = {
@@ -81,7 +89,7 @@ def main():
 
     # Logging into Tensorboard
     log_dir = os.path.join(save_dir, 'runs', datetime.now().strftime('%b%d_%H-%M-%S') + '_' + socket.gethostname()+'-'+seq_name)
-    writer = SummaryWriter(log_dir=log_dir)
+    #writer = SummaryWriter(log_dir=log_dir)
 
     # Sends the code to the GPU
     net.to(device)  # PyTorch 0.4.0 style
@@ -162,7 +170,7 @@ def main():
 
                 print('[Epoch: %d, numImages: %5d]' % (epoch+1, ii + 1))
                 print('Loss: %f' % running_loss_tr)
-                writer.add_scalar('data/total_loss_epoch', running_loss_tr, epoch)
+                #writer.add_scalar('data/total_loss_epoch', running_loss_tr, epoch)
 
             # Backward the averaged gradient
             loss /= nAveGrad
@@ -171,7 +179,7 @@ def main():
 
             # Update the weights once in nAveGrad forward passes
             if aveGrad % nAveGrad == 0:
-                writer.add_scalar('data/total_loss_iter', loss.item(), ii + num_img_tr * epoch)
+                #writer.add_scalar('data/total_loss_iter', loss.item(), ii + num_img_tr * epoch)
                 optimizer.step()
                 optimizer.zero_grad()
                 aveGrad = 0
@@ -194,9 +202,10 @@ def main():
         plt.ion()
         f, ax_arr = plt.subplots(1, 3)
 
-    save_dir_res = os.path.join(save_dir, 'Results', seq_name)
-    if not os.path.exists(save_dir_res):
-        os.makedirs(save_dir_res)
+    save_dir_res = os.path.join(save_dir, 'results', seq_name)
+    #if not os.path.exists(save_dir_res):
+    #    os.makedirs(save_dir_res)
+    force_makedirs(save_dir_res)
 
     print('Testing Network')
     with torch.no_grad():  # PyTorch 0.4.0 style (Do not update the gradients = Predict)
@@ -217,9 +226,8 @@ def main():
 
                 # Save the result, attention to the index jj
                 # sm.imsave(os.path.join(save_dir_res, os.path.basename(fname[jj]) + '.png'), pred) # Deprecated (scipy.imsave)
-                pred_as_uint8 = pred.astype(np.uint8) # Removes Warning
-                imageio.imwrite(os.path.join(save_dir_res, os.path.basename(fname[jj]) + '.png'), pred_as_uint8)
-                print('Result (' + fname[jj] + '.png) Saved!')
+                # pred_as_uint8 = pred.astype(np.uint8) # Removes Warning
+                imageio.imwrite(os.path.join(save_dir_res, os.path.basename(fname[jj]) + '.png'), pred)
 
                 if vis_res:
                     img_ = np.transpose(img.numpy()[jj, :, :, :], (1, 2, 0))
@@ -237,7 +245,7 @@ def main():
                     ax_arr[2].imshow(im_normalize(pred))
                     plt.pause(0.001)
 
-    writer.close()
+    #writer.close()
     print('OSVOS End..')
 
 # Required for execution on Windows

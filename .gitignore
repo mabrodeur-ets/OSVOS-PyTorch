@@ -12,3 +12,7 @@ params.py
 cluster/script.sh
 cluster/train_parent.sh
 experiments/
+
+.vscode/*
+data/*
+models/Results/*
