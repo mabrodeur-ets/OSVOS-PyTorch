@@ -92,7 +92,7 @@ def main():
     #writer = SummaryWriter(log_dir=log_dir)
 
     # Sends the code to the GPU
-    net.to(device)  # PyTorch 0.4.0 style
+    net.to(device)
 
     # Visualize the network
     if vis_net:
@@ -161,7 +161,7 @@ def main():
 
             # Compute the fuse loss
             loss = class_balanced_cross_entropy_loss(outputs[-1], gts, size_average=False)
-            running_loss_tr += loss.item()  # PyTorch 0.4.0 style
+            running_loss_tr += loss.item()
 
             # Print stuff
             if epoch % (nEpochs//20) == (nEpochs//20 - 1):
@@ -226,7 +226,7 @@ def main():
 
                 # Save the result, attention to the index jj
                 # sm.imsave(os.path.join(save_dir_res, os.path.basename(fname[jj]) + '.png'), pred) # Deprecated (scipy.imsave)
-                # pred_as_uint8 = pred.astype(np.uint8) # Removes Warning
+                # pred_as_uint8 = pred.astype(np.uint8) # Removes Warning (DO NOT USE: OUTPUT IMAGES WON'T WORK / NO MASK)
                 imageio.imwrite(os.path.join(save_dir_res, os.path.basename(fname[jj]) + '.png'), pred)
 
                 if vis_res:

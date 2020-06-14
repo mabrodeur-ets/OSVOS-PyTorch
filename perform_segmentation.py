@@ -28,6 +28,22 @@ from mypath import Path
 from datetime import datetime, date, time, timedelta
 import sys
 
+def force_makedirs(directory):
+    """
+    Create a directory (without permission error)
+
+    Parameters
+    ----------
+    directory : str
+        Path to the directory to create
+    """
+    print(directory)
+    if not os.path.exists(directory):
+        previous_umask = os.umask(000) # os.umask() returns the previous setting, thus previous_umask
+        os.makedirs(os.path.join(directory), 0o777)
+        os.umask(previous_umask)
+
+
 # Documentation Reference
 # https://realpython.com/documenting-python-code/
 def main(sequenceName = None, parentModelName = 'parent', parentEpoch = 240, vis_net = 0, vis_res = 0):
@@ -64,8 +80,7 @@ def main(sequenceName = None, parentModelName = 'parent', parentEpoch = 240, vis
     save_dir = Path.save_root_dir()
 
     # Create the path for save_dir if it doesn't exist
-    if not os.path.exists(save_dir):
-        os.makedirs(os.path.join(save_dir))
+    force_makedirs(save_dir)
 
     # User Variables
     # ------------------------------------
@@ -157,12 +172,13 @@ def main(sequenceName = None, parentModelName = 'parent', parentEpoch = 240, vis
         plt.ion()
         f, ax_arr = plt.subplots(1, 3)
 
-    save_dir_res = os.path.join(save_dir, 'Results', seq_name)
-    if not os.path.exists(save_dir_res):
-        os.makedirs(save_dir_res)
+    # Create results folder for output images
+    save_dir_res = os.path.join(save_dir, 'results', seq_name)
+    force_makedirs(save_dir_res)
 
     print('Testing Network')
-    with torch.no_grad():  # PyTorch 0.4.0 style (Do not update the gradients => Predict)
+    # (torch.no_grad() => Do not update the gradients => Predict)
+    with torch.no_grad(): 
         
         # Main Testing Loop
         for ii, sample_batched in enumerate(testloader):
@@ -181,8 +197,8 @@ def main(sequenceName = None, parentModelName = 'parent', parentEpoch = 240, vis
 
                 # Save the result, attention to the index jj
                 # sm.imsave(os.path.join(save_dir_res, os.path.basename(fname[jj]) + '.png'), pred) # Deprecated (scipy.imsave)
-                pred_as_uint8 = pred.astype(np.uint8) # Removes Warning
-                imageio.imwrite(os.path.join(save_dir_res, os.path.basename(fname[jj]) + '.png'), pred_as_uint8)
+                # pred_as_uint8 = pred.astype(np.uint8) # Removes Warning (DO NOT USE: OUTPUT IMAGES WON'T WORK / NO MASK)
+                imageio.imwrite(os.path.join(save_dir_res, os.path.basename(fname[jj]) + '.png'), pred)
                 print('Result (' + fname[jj] + '.png) Saved!')
 
                 if vis_res:
